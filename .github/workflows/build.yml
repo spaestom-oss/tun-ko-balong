@@ -7,12 +7,20 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
+
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install deps
-      run: sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi make bc libssl-dev
+    - name: Install deps (Ubuntu 20.04 has gcc-arm-linux-gnueabi 9.x)
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          gcc-arm-linux-gnueabi \
+          make bc libssl-dev
+
+    - name: Check compiler version
+      run: arm-linux-gnueabi-gcc --version
 
     - name: Download Linux 3.4.113 from kernel.org
       run: |
@@ -21,29 +29,21 @@ jobs:
         mv linux-3.4.113 kernel_src
         ls kernel_src/drivers/net/tun.c
 
-    - name: Patch version to 3.4.5 and inject our tun.c
+    - name: Patch version to 3.4.5 and inject tun.c
       run: |
         cd kernel_src
         sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 5/' Makefile
         cp ../tun.c drivers/net/tun.c
         head -6 Makefile
 
-    - name: Configure kernel
+    - name: Configure and prepare kernel
       run: |
         cd kernel_src
-        # Start from ARM vexpress defconfig (has all ARM required options)
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- vexpress_defconfig
-        # Enable TUN as module
         echo 'CONFIG_TUN=m' >> .config
-        echo 'CONFIG_MODULE_UNLOAD=y' >> .config
-        # Regenerate
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- olddefconfig 2>&1 | tail -3
         grep CONFIG_TUN .config
-
-    - name: Prepare modules
-      run: |
-        cd kernel_src
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- modules_prepare 2>&1 | tail -5
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- modules_prepare 2>&1 | tail -3
 
     - name: Build tun.ko
       run: |

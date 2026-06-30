@@ -1,4 +1,4 @@
-name: Build tun.ko for Huawei E5577 Balong V7R2 (Linux 3.4.5)
+﻿name: Build tun.ko for Huawei E5577 Balong V7R2
 
 on:
   push:
@@ -6,84 +6,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-tun-ko:
+  build:
     runs-on: ubuntu-22.04
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    - name: Install ARM cross-compiler and build tools
+    - name: Install deps
+      run: sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi make bc libssl-dev git
+
+    - name: Clone kernel 3.4
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y gcc-arm-linux-gnueabi make bc libssl-dev git
-
-    - name: Verify compiler
-      run: arm-linux-gnueabi-gcc --version
-
-    - name: Clone Android 3.4 kernel (shallow)
-      run: |
-        mkdir kernel_src
-        cd kernel_src
+        mkdir kernel_src && cd kernel_src
         git init
         git remote add origin https://android.googlesource.com/kernel/common.git
         git fetch --depth=1 origin android-3.4
         git checkout FETCH_HEAD
-        head -6 Makefile
 
-    - name: Patch kernel version to 3.4.5 and apply Balong config
+    - name: Configure and build tun.ko
       run: |
         cd kernel_src
-
-        # Patch version
-        sed -i 's/^VERSION = .*/VERSION = 3/'     Makefile
+        sed -i 's/^VERSION = .*/VERSION = 3/' Makefile
         sed -i 's/^PATCHLEVEL = .*/PATCHLEVEL = 4/' Makefile
-        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 5/'    Makefile
+        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 5/' Makefile
         sed -i 's/^EXTRAVERSION = .*/EXTRAVERSION =/' Makefile
-
-        # Inject our Balong tun.c
         cp ../tun.c drivers/net/tun.c
-
-        # Minimal .config for ARM tun module
-        cat > .config <<'EOCFG'
-CONFIG_ARM=y
-CONFIG_CPU_V7=y
-CONFIG_AEABI=y
-CONFIG_MMU=y
-CONFIG_PREEMPT=y
-CONFIG_HZ_100=y
-CONFIG_HZ=100
-CONFIG_NO_HZ=y
-CONFIG_MODULES=y
-CONFIG_MODULE_UNLOAD=y
-CONFIG_MODVERSIONS=n
-CONFIG_NET=y
-CONFIG_INET=y
-CONFIG_UNIX=y
-CONFIG_PACKET=y
-CONFIG_NETDEVICES=y
-CONFIG_NET_CORE=y
-CONFIG_TUN=m
-CONFIG_LOCALVERSION=""
-EOCFG
-
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- olddefconfig 2>&1 | tail -5
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- modules_prepare 2>&1 | tail -5
-
-    - name: Build tun.ko
-      run: |
-        cd kernel_src
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- M=drivers/net CONFIG_TUN=m 2>&1
+        printf '%s\n' \
+          'CONFIG_ARM=y' 'CONFIG_CPU_V7=y' 'CONFIG_AEABI=y' 'CONFIG_MMU=y' \
+          'CONFIG_PREEMPT=y' 'CONFIG_HZ_100=y' 'CONFIG_HZ=100' 'CONFIG_NO_HZ=y' \
+          'CONFIG_MODULES=y' 'CONFIG_MODULE_UNLOAD=y' 'CONFIG_MODVERSIONS=n' \
+          'CONFIG_NET=y' 'CONFIG_INET=y' 'CONFIG_UNIX=y' 'CONFIG_PACKET=y' \
+          'CONFIG_NETDEVICES=y' 'CONFIG_NET_CORE=y' 'CONFIG_TUN=m' \
+          'CONFIG_LOCALVERSION=""' > .config
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- olddefconfig
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- modules_prepare
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- M=drivers/net CONFIG_TUN=m
         ls -la drivers/net/tun.ko
+        strings drivers/net/tun.ko | grep vermagic
 
-    - name: Check vermagic
-      run: |
-        strings kernel_src/drivers/net/tun.ko | grep vermagic
-        file kernel_src/drivers/net/tun.ko
-
-    - name: Upload tun.ko
-      uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v4
       with:
-        name: tun-ko-balong-v7r2-3.4.5
+        name: tun-ko-balong-v7r2
         path: kernel_src/drivers/net/tun.ko
         if-no-files-found: error

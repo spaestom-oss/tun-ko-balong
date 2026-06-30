@@ -11,104 +11,78 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install ARM cross-compiler and build tools
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y \
-          gcc-arm-linux-gnueabi \
-          make bc libssl-dev \
-          git wget curl
+        sudo apt-get install -y gcc-arm-linux-gnueabi make bc libssl-dev git
 
-    - name: Check ARM compiler
-      run: |
-        arm-linux-gnueabi-gcc --version
-        which arm-linux-gnueabi-gcc
+    - name: Verify compiler
+      run: arm-linux-gnueabi-gcc --version
 
-    - name: Download Android kernel 3.4
+    - name: Clone Android 3.4 kernel (shallow)
       run: |
-        # Use Android 4.2 kernel (3.4.x) from official AOSP
-        mkdir -p kernel_src
+        mkdir kernel_src
         cd kernel_src
-        # Clone goldfish kernel (Android emulator, has 3.4.x branch)
         git init
         git remote add origin https://android.googlesource.com/kernel/common.git
         git fetch --depth=1 origin android-3.4
         git checkout FETCH_HEAD
-        echo "Kernel version: $(cat Makefile | head -5)"
+        head -6 Makefile
 
-    - name: Apply Balong V7R2 config
+    - name: Patch kernel version to 3.4.5 and apply Balong config
       run: |
         cd kernel_src
 
-        # Copy our tun.c from the Balong sources (identical to stock 3.4 tun.c)
-        cp ../tun.c drivers/net/tun.c
-
-        # Create minimal .config for module build
-        cat > .config << 'EOF'
-        CONFIG_ARM=y
-        CONFIG_ARCH_MULTI_V7=y
-        CONFIG_SMP=n
-        CONFIG_PREEMPT=y
-        CONFIG_MODULES=y
-        CONFIG_MODULE_UNLOAD=y
-        CONFIG_NET=y
-        CONFIG_UNIX=y
-        CONFIG_INET=y
-        CONFIG_PACKET=y
-        CONFIG_TUN=m
-        CONFIG_NETDEVICES=y
-        CONFIG_NET_CORE=y
-        CONFIG_MACVLAN=n
-        CONFIG_HAVE_ARCH_TRACEHOOK=y
-        CONFIG_GENERIC_HARDIRQS=y
-        CONFIG_GENERIC_IRQ_PROBE=y
-        CONFIG_GENERIC_IRQ_SHOW=y
-        CONFIG_IRQ_DOMAIN=y
-        CONFIG_NO_HZ=y
-        CONFIG_HZ_100=y
-        CONFIG_HZ=100
-        CONFIG_LOCALVERSION=""
-        CONFIG_CROSS_MEMORY_ATTACH=y
-        CONFIG_AEABI=y
-        CONFIG_CPU_V7=y
-        CONFIG_MMU=y
-        CONFIG_UACCESS_WITH_MEMCPY=n
-        EOF
-
-        # Set kernel version to match Balong V7R2
-        sed -i 's/^VERSION = .*/VERSION = 3/' Makefile
+        # Patch version
+        sed -i 's/^VERSION = .*/VERSION = 3/'     Makefile
         sed -i 's/^PATCHLEVEL = .*/PATCHLEVEL = 4/' Makefile
-        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 5/' Makefile
+        sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 5/'    Makefile
         sed -i 's/^EXTRAVERSION = .*/EXTRAVERSION =/' Makefile
 
-        # Prepare kernel build
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- olddefconfig 2>&1 | tail -3
+        # Inject our Balong tun.c
+        cp ../tun.c drivers/net/tun.c
+
+        # Minimal .config for ARM tun module
+        cat > .config <<'EOCFG'
+CONFIG_ARM=y
+CONFIG_CPU_V7=y
+CONFIG_AEABI=y
+CONFIG_MMU=y
+CONFIG_PREEMPT=y
+CONFIG_HZ_100=y
+CONFIG_HZ=100
+CONFIG_NO_HZ=y
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+CONFIG_MODVERSIONS=n
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_UNIX=y
+CONFIG_PACKET=y
+CONFIG_NETDEVICES=y
+CONFIG_NET_CORE=y
+CONFIG_TUN=m
+CONFIG_LOCALVERSION=""
+EOCFG
+
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- olddefconfig 2>&1 | tail -5
         make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- modules_prepare 2>&1 | tail -5
 
-    - name: Build tun.ko module
+    - name: Build tun.ko
       run: |
         cd kernel_src
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- \
-          CONFIG_TUN=m \
-          M=drivers/net \
-          2>&1 | tail -20
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- M=drivers/net CONFIG_TUN=m 2>&1
         ls -la drivers/net/tun.ko
 
-    - name: Verify vermagic
-      run: |
-        modinfo kernel_src/drivers/net/tun.ko
-        arm-linux-gnueabi-readelf -S kernel_src/drivers/net/tun.ko | grep -A2 '\.modinfo'
-        arm-linux-gnueabi-objdump -s --section=.modinfo kernel_src/drivers/net/tun.ko | head -20
-
-    - name: Check vermagic string
+    - name: Check vermagic
       run: |
         strings kernel_src/drivers/net/tun.ko | grep vermagic
         file kernel_src/drivers/net/tun.ko
 
-    - name: Upload tun.ko artifact
-      uses: actions/upload-artifact@v3
+    - name: Upload tun.ko
+      uses: actions/upload-artifact@v4
       with:
         name: tun-ko-balong-v7r2-3.4.5
         path: kernel_src/drivers/net/tun.ko
